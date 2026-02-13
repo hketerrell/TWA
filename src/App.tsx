@@ -109,6 +109,8 @@ const formatExcelDateTime = (value: string | number | undefined) => {
   return String(value);
 };
 
+const blobSignUrl = import.meta.env.VITE_BLOB_SIGN_URL as string | undefined;
+
 const getRowValue = (row: Record<string, string | number>, aliases: string[]) => {
   const directMatch = aliases.find((alias) => row[alias] !== undefined);
   if (directMatch) return row[directMatch];
@@ -125,6 +127,9 @@ export function App() {
   const [uploadName, setUploadName] = useState("Sample data loaded");
   const [lastUpdated, setLastUpdated] = useState("Just now");
   const [uploadError, setUploadError] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | undefined>();
+  const [blobStatus, setBlobStatus] = useState("");
+  const [isSavingBlob, setIsSavingBlob] = useState(false);
 
   const statuses = useMemo(() => {
     const unique = Array.from(new Set(rows.map((row) => row.status)));
@@ -142,6 +147,7 @@ export function App() {
   const handleFile = async (file?: File) => {
     if (!file) return;
     setUploadError("");
+    setBlobStatus("");
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -175,6 +181,7 @@ export function App() {
       const validRows = mapped.filter((row) => row.flight || row.airline);
       setRows(validRows);
       setUploadName(file.name);
+      setSelectedFile(file);
       setLastUpdated(new Date().toLocaleString());
 
       if (!validRows.length) {
@@ -184,6 +191,56 @@ export function App() {
       }
     } catch {
       setUploadError("Couldn't read this workbook. Please upload a valid .xls, .xlsx, or .xlsm file.");
+    }
+  };
+
+
+  const saveToBlob = async () => {
+    if (!selectedFile) {
+      setBlobStatus("Please choose a file before saving to Blob.");
+      return;
+    }
+
+    if (!blobSignUrl) {
+      setBlobStatus("Set VITE_BLOB_SIGN_URL to your backend signer endpoint, then try again.");
+      return;
+    }
+
+    setIsSavingBlob(true);
+    setBlobStatus("");
+
+    try {
+      const signResponse = await fetch(blobSignUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: selectedFile.name, contentType: selectedFile.type || "application/octet-stream" }),
+      });
+
+      if (!signResponse.ok) {
+        throw new Error("Failed to create signed upload URL.");
+      }
+
+      const signData = (await signResponse.json()) as { uploadUrl?: string; pathname?: string };
+      if (!signData.uploadUrl) {
+        throw new Error("Signer response missing uploadUrl.");
+      }
+
+      const uploadResponse = await fetch(signData.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": selectedFile.type || "application/octet-stream" },
+        body: selectedFile,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error("Blob upload failed.");
+      }
+
+      setBlobStatus(`Saved to Blob${signData.pathname ? `: ${signData.pathname}` : " successfully"}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Blob upload failed.";
+      setBlobStatus(message);
+    } finally {
+      setIsSavingBlob(false);
     }
   };
 
@@ -253,6 +310,25 @@ export function App() {
               {uploadError && (
                 <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-xs text-amber-100">
                   {uploadError}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={saveToBlob}
+                  disabled={!selectedFile || isSavingBlob}
+                  className="rounded-full border border-emerald-300/40 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSavingBlob ? "Saving to Blob..." : "Save file to Vercel Blob"}
+                </button>
+                <p className="text-xs text-slate-400">
+                  Requires <code className="text-slate-300">VITE_BLOB_SIGN_URL</code> backend endpoint returning
+                  <code className="ml-1 text-slate-300">{`{ uploadUrl, pathname }`}</code>.
+                </p>
+              </div>
+              {blobStatus && (
+                <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-100">
+                  {blobStatus}
                 </p>
               )}
               <div className="grid gap-3 sm:grid-cols-3">
