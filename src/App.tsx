@@ -80,7 +80,7 @@ const steps = [
   },
   {
     title: "Map columns",
-    body: "Supports both standard headers (Flight, Airline, From, To...) and ops headers (Flt. ID, STA/STD, ETA/ETD, ATA/ATD, O/D, A/C, ARR/DEP, GROUND TIME, WORK).",
+    body: "Supports ops headers like Flt. ID, O/D, STA/STD, ETA/ETD, A/D, and STD.",
   },
   {
     title: "Share live ops view",
@@ -89,6 +89,25 @@ const steps = [
 ];
 
 const normalizeKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const formatExcelDateTime = (value: string | number | undefined) => {
+  if (value === undefined || value === "") return "";
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (!parsed) return String(value);
+
+    const asDate = new Date(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, Math.floor(parsed.S));
+    return asDate.toLocaleString();
+  }
+
+  const numericValue = typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isNaN(numericValue) && value.trim() !== "") {
+    return formatExcelDateTime(numericValue);
+  }
+
+  return String(value);
+};
 
 const getRowValue = (row: Record<string, string | number>, aliases: string[]) => {
   const directMatch = aliases.find((alias) => row[alias] !== undefined);
@@ -143,12 +162,12 @@ export function App() {
         return {
           flight: String(getRowValue(row, ["Flight", "flight", "Flt. ID", "Flt ID", "FLT ID", "Flight No", "Flight Number"]) ?? ""),
           airline: String(getRowValue(row, ["Airline", "airline", "A/C", "Aircraft", "Carrier", "WORK"]) ?? ""),
-          from: String(getRowValue(row, ["From", "from", "Origin", "STA/STD", "STD", "STA"]) ?? routeFrom),
-          to: String(getRowValue(row, ["To", "to", "Destination", "ETA/ETD", "ATA/ATD", "ARR/DEP"]) ?? routeTo),
-          dep: String(getRowValue(row, ["Departure", "dep", "Dep", "STD", "STA/STD", "ETD", "ETA/ETD"]) ?? ""),
-          arr: String(getRowValue(row, ["Arrival", "arr", "Arr", "ETA", "ATA", "ETA/ETD", "ATA/ATD"]) ?? ""),
-          status: String(getRowValue(row, ["Status", "status", "ARR/DEP", "WORK", "Movement"]) ?? ""),
-          gate: String(getRowValue(row, ["Gate", "gate", "GROUND TIME", "Ground Time"]) ?? ""),
+          from: String(getRowValue(row, ["From", "from", "Origin"]) ?? routeFrom),
+          to: String(getRowValue(row, ["To", "to", "Destination"]) ?? routeTo),
+          dep: formatExcelDateTime(getRowValue(row, ["STA/STD", "STD", "Departure", "dep", "Dep", "STA", "ETD"])),
+          arr: formatExcelDateTime(getRowValue(row, ["ETA/ETD", "ETA", "Arrival", "arr", "Arr", "ATA/ATD", "ATA"])),
+          status: String(getRowValue(row, ["A/D", "Status", "status", "ARR/DEP", "Movement"]) ?? ""),
+          gate: String(getRowValue(row, ["STD", "Gate", "gate"]) ?? ""),
           terminal: String(getRowValue(row, ["Terminal", "terminal", "A/C", "Equipment"]) ?? ""),
         };
       });
@@ -160,7 +179,7 @@ export function App() {
 
       if (!validRows.length) {
         setUploadError(
-          "No flight rows were found in this file. Try headers like Flight/Flt. ID, O/D, STA/STD, ETA/ETD, ATA/ATD, ARR/DEP, and WORK.",
+          "No flight rows were found in this file. Try headers like Flt. ID, O/D, STA/STD, ETA/ETD, A/D, and STD.",
         );
       }
     } catch {
