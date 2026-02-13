@@ -94,6 +94,7 @@ export function App() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [uploadName, setUploadName] = useState("Sample data loaded");
   const [lastUpdated, setLastUpdated] = useState("Just now");
+  const [uploadError, setUploadError] = useState("");
 
   const statuses = useMemo(() => {
     const unique = Array.from(new Set(rows.map((row) => row.status)));
@@ -110,29 +111,42 @@ export function App() {
 
   const handleFile = async (file?: File) => {
     if (!file) return;
-    const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const jsonData = XLSX.utils.sheet_to_json<Record<string, string | number>>(worksheet, {
-      defval: "",
-    });
+    setUploadError("");
 
-    const mapped = jsonData.map((row) => ({
-      flight: String(row.Flight ?? row.flight ?? ""),
-      airline: String(row.Airline ?? row.airline ?? ""),
-      from: String(row.From ?? row.from ?? ""),
-      to: String(row.To ?? row.to ?? ""),
-      dep: String(row.Departure ?? row.dep ?? row.Dep ?? ""),
-      arr: String(row.Arrival ?? row.arr ?? row.Arr ?? ""),
-      status: String(row.Status ?? row.status ?? ""),
-      gate: String(row.Gate ?? row.gate ?? ""),
-      terminal: String(row.Terminal ?? row.terminal ?? ""),
-    }));
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json<Record<string, string | number>>(worksheet, {
+        defval: "",
+      });
 
-    setRows(mapped.filter((row) => row.flight || row.airline));
-    setUploadName(file.name);
-    setLastUpdated(new Date().toLocaleString());
+      const mapped = jsonData.map((row) => ({
+        flight: String(row.Flight ?? row.flight ?? ""),
+        airline: String(row.Airline ?? row.airline ?? ""),
+        from: String(row.From ?? row.from ?? ""),
+        to: String(row.To ?? row.to ?? ""),
+        dep: String(row.Departure ?? row.dep ?? row.Dep ?? ""),
+        arr: String(row.Arrival ?? row.arr ?? row.Arr ?? ""),
+        status: String(row.Status ?? row.status ?? ""),
+        gate: String(row.Gate ?? row.gate ?? ""),
+        terminal: String(row.Terminal ?? row.terminal ?? ""),
+      }));
+
+      const validRows = mapped.filter((row) => row.flight || row.airline);
+      setRows(validRows);
+      setUploadName(file.name);
+      setLastUpdated(new Date().toLocaleString());
+
+      if (!validRows.length) {
+        setUploadError(
+          "No flight rows were found in this file. Check column names like Flight, Airline, From, To, Departure, and Arrival.",
+        );
+      }
+    } catch {
+      setUploadError("Couldn't read this workbook. Please upload a valid .xls, .xlsx, or .xlsm file.");
+    }
   };
 
   return (
@@ -174,7 +188,7 @@ export function App() {
               <label className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/20 bg-white/5 px-6 py-8 text-center hover:border-emerald-300/60 hover:bg-emerald-500/10">
                 <input
                   type="file"
-                  accept=".xls,.xlsx"
+                  accept=".xls,.xlsx,.xlsm"
                   className="hidden"
                   onChange={(event) => handleFile(event.target.files?.[0])}
                 />
@@ -194,10 +208,15 @@ export function App() {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-white">Drop XLS/XLSX file</p>
+                  <p className="text-sm font-semibold text-white">Drop XLS/XLSX/XLSM file</p>
                   <p className="text-xs text-slate-400">or browse to load blob content</p>
                 </div>
               </label>
+              {uploadError && (
+                <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-xs text-amber-100">
+                  {uploadError}
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <p className="text-xs uppercase text-slate-400">Rows loaded</p>
@@ -286,39 +305,45 @@ export function App() {
                 <span>Gate</span>
               </div>
               <div className="max-h-[420px] divide-y divide-white/5 overflow-y-auto">
-                {filtered.map((row) => (
-                  <div
-                    key={`${row.flight}-${row.dep}`}
-                    className="grid grid-cols-[1.1fr_1.4fr_1fr_1fr_0.9fr_0.7fr] gap-4 px-4 py-4 text-sm text-slate-200"
-                  >
-                    <div>
-                      <p className="font-semibold text-white">{row.flight}</p>
-                      <p className="text-xs text-slate-500">{row.airline}</p>
+                {filtered.length ? (
+                  filtered.map((row) => (
+                    <div
+                      key={`${row.flight}-${row.dep}`}
+                      className="grid grid-cols-[1.1fr_1.4fr_1fr_1fr_0.9fr_0.7fr] gap-4 px-4 py-4 text-sm text-slate-200"
+                    >
+                      <div>
+                        <p className="font-semibold text-white">{row.flight}</p>
+                        <p className="text-xs text-slate-500">{row.airline}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">{row.from}</p>
+                        <p className="text-xs text-slate-500">{row.to}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">{row.dep}</p>
+                        <p className="text-xs text-slate-500">Terminal {row.terminal || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">{row.arr}</p>
+                        <p className="text-xs text-slate-500">Gate {row.gate || "-"}</p>
+                      </div>
+                      <div>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
+                            statusStyles[row.status] || "bg-white/5 text-slate-200 border-white/10"
+                          }`}
+                        >
+                          {row.status || "Unknown"}
+                        </span>
+                      </div>
+                      <div className="text-right text-xs text-slate-400">{row.gate || "--"}</div>
                     </div>
-                    <div>
-                      <p className="font-medium text-white">{row.from}</p>
-                      <p className="text-xs text-slate-500">{row.to}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-white">{row.dep}</p>
-                      <p className="text-xs text-slate-500">Terminal {row.terminal || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-white">{row.arr}</p>
-                      <p className="text-xs text-slate-500">Gate {row.gate || "-"}</p>
-                    </div>
-                    <div>
-                      <span
-                        className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
-                          statusStyles[row.status] || "bg-white/5 text-slate-200 border-white/10"
-                        }`}
-                      >
-                        {row.status || "Unknown"}
-                      </span>
-                    </div>
-                    <div className="text-right text-xs text-slate-400">{row.gate || "--"}</div>
+                  ))
+                ) : (
+                  <div className="px-4 py-10 text-center text-sm text-slate-400">
+                    No flights found. Try another file or clear your search filters.
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
