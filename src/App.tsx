@@ -119,7 +119,6 @@ export function App() {
           <p className="eyebrow">Operations overview</p>
           <h1>Flight Schedule Dashboard</h1>
           <p className="hero-subtitle">
-            Live view from <code>{SCHEDULE_FILE}</code>
             {sheetName ? ` • Sheet: ${sheetName}` : ""}
           </p>
         </div>
