@@ -5,13 +5,12 @@ import scheduleFileUrl from "../flightSearch - Copy (3).xlsm?url";
 type FlightRow = Record<string, string | number | boolean | null | undefined>;
 
 type SaveApiSuccess = {
-  uploadedAt: string;
+  savedAt: string;
   rowCount: number;
+  destination: string;
 };
 
 const SCHEDULE_FILE = scheduleFileUrl;
-const BLOB_UPLOAD_SAS_URL = import.meta.env.VITE_BLOB_UPLOAD_SAS_URL as string | undefined;
-
 function normalize(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toLocaleString();
@@ -120,7 +119,7 @@ export function App() {
     });
   }, [query, rows]);
 
-  async function saveToBlobStorage() {
+  async function saveToCloudflareD1() {
     try {
       setSaveState("saving");
       setSaveMessage("");
@@ -133,25 +132,6 @@ export function App() {
         data: filteredRows,
       };
 
-      if (BLOB_UPLOAD_SAS_URL) {
-        const response = await fetch(BLOB_UPLOAD_SAS_URL, {
-          method: "PUT",
-          headers: {
-            "x-ms-blob-type": "BlockBlob",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload, null, 2),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Blob upload failed (${response.status})`);
-        }
-
-        setSaveState("success");
-        setSaveMessage("Data saved to blob storage via SAS URL.");
-        return;
-      }
-
       const response = await fetch("/api/save-flights", {
         method: "POST",
         headers: {
@@ -161,12 +141,12 @@ export function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Blob API upload failed (${response.status})`);
+        throw new Error(`Cloudflare D1 API save failed (${response.status})`);
       }
 
       const result = (await response.json()) as SaveApiSuccess;
       setSaveState("success");
-      setSaveMessage(`Data saved to blob storage (${result.rowCount} rows).`);
+      setSaveMessage(`Data saved to Cloudflare D1 (${result.rowCount} rows).`);
     } catch (uploadError) {
       setSaveState("error");
       setSaveMessage(uploadError instanceof Error ? uploadError.message : "Upload failed.");
@@ -205,10 +185,10 @@ export function App() {
           <button
             className="save-button"
             disabled={loading || !!error || filteredRows.length === 0 || saveState === "saving"}
-            onClick={() => void saveToBlobStorage()}
+            onClick={() => void saveToCloudflareD1()}
             type="button"
           >
-            {saveState === "saving" ? "Saving..." : "Save to Blob"}
+            {saveState === "saving" ? "Saving..." : "Save to Cloudflare D1"}
           </button>
         </div>
 
