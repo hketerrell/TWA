@@ -12,6 +12,7 @@ type SaveApiSuccess = {
 const SCHEDULE_FILE = scheduleFileUrl;
 const BLOB_UPLOAD_SAS_URL = import.meta.env.VITE_BLOB_UPLOAD_SAS_URL as string | undefined;
 
+const SCHEDULE_FILE = scheduleFileUrl;
 function normalize(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toLocaleString();
