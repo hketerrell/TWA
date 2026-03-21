@@ -50,6 +50,23 @@ function getDisplayColumns(rows: FlightRow[]): string[] {
   return [...prioritized, ...remaining];
 }
 
+function buildBlobDataset(columns: string[], rows: FlightRow[]) {
+  const rowMatrix = rows.map((row) => columns.map((column) => normalize(row[column]) || "—"));
+
+  const columnMap = Object.fromEntries(
+    columns.map((column, columnIndex) => [
+      column,
+      rowMatrix.map((rowValues) => rowValues[columnIndex]),
+    ]),
+  );
+
+  return {
+    columns,
+    rows: rowMatrix,
+    byColumn: columnMap,
+  };
+}
+
 export function App() {
   const [rows, setRows] = useState<FlightRow[]>([]);
   const [sheetName, setSheetName] = useState("");
@@ -123,12 +140,16 @@ export function App() {
       setSaveState("saving");
       setSaveMessage("");
 
+      const dataset = buildBlobDataset(columns, filteredRows);
+
       const payload = {
         savedAt: new Date().toISOString(),
         sheetName,
         totalRows: rows.length,
         filteredRows: filteredRows.length,
-        data: filteredRows,
+        columns: dataset.columns,
+        rows: dataset.rows,
+        byColumn: dataset.byColumn,
       };
 
       const response = await fetch("/api/save-flights", {
