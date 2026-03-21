@@ -5,7 +5,9 @@ type RequestBody = {
   sheetName?: string;
   totalRows?: number;
   filteredRows?: number;
-  data?: unknown;
+  columns?: string[];
+  rows?: string[][];
+  byColumn?: Record<string, string[]>;
 };
 
 type ApiRequest = {
