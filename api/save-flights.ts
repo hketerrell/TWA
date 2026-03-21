@@ -12,7 +12,7 @@ type RequestBody = {
 
 type ApiRequest = {
   method?: string;
-  body?: RequestBody;
+  body?: unknown;
 };
 
 type ApiResponse = {
@@ -68,14 +68,39 @@ async function executeD1Statement(statement: string, params: unknown[]) {
   return payload.result?.[0];
 }
 
+function parseRequestBody(rawBody: unknown): RequestBody {
+  if (!rawBody) return {};
+
+  if (typeof rawBody === "string") {
+    try {
+      return JSON.parse(rawBody) as RequestBody;
+    } catch {
+      throw new Error("Request body must be valid JSON");
+    }
+  }
+
+  if (typeof rawBody === "object") {
+    return rawBody as RequestBody;
+  }
+
+  return {};
+}
+
 function toFlightRows(data: unknown): FlightRow[] {
   if (!Array.isArray(data)) {
     return [];
   }
 
   return data.map((row) => {
-    if (row && typeof row === "object") {
+    if (row && typeof row === "object" && !Array.isArray(row)) {
       return row as FlightRow;
+    }
+
+    if (Array.isArray(row)) {
+      return row.reduce<FlightRow>((acc, cell, idx) => {
+        acc[`column_${idx + 1}`] = cell;
+        return acc;
+      }, {});
     }
 
     return { value: row };
@@ -89,6 +114,14 @@ function normalizeCellValue(value: unknown): string {
   return String(value);
 }
 
+function normalizeColumnKey(columnName: string): string {
+  return columnName
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_./-]/g, "");
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -96,8 +129,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const body = (req.body ?? {}) as RequestBody;
+    const body = parseRequestBody(req.body);
     const rows = toFlightRows(body.data);
+
+    if (rows.length === 0) {
+      throw new Error("No rows received. Ensure the client sends parsed Excel rows in body.data.");
+    }
 
     await executeD1Statement(
       `
@@ -119,6 +156,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         snapshot_id INTEGER NOT NULL,
         row_index INTEGER NOT NULL,
         column_name TEXT NOT NULL,
+        column_key TEXT NOT NULL,
         cell_value TEXT,
         FOREIGN KEY (snapshot_id) REFERENCES flight_snapshots(id)
       );
@@ -154,10 +192,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       for (const [columnName, rawValue] of Object.entries(row)) {
         await executeD1Statement(
           `
-          INSERT INTO flight_snapshot_cells (snapshot_id, row_index, column_name, cell_value)
-          VALUES (?, ?, ?, ?);
+          INSERT INTO flight_snapshot_cells (snapshot_id, row_index, column_name, column_key, cell_value)
+          VALUES (?, ?, ?, ?, ?);
           `,
-          [snapshotId, rowIndex, columnName, normalizeCellValue(rawValue)],
+          [snapshotId, rowIndex, columnName, normalizeColumnKey(columnName), normalizeCellValue(rawValue)],
         );
         insertedCells += 1;
       }

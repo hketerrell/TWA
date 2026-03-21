@@ -7,6 +7,7 @@ type FlightRow = Record<string, string | number | boolean | null | undefined>;
 type SaveApiSuccess = {
   savedAt: string;
   rowCount: number;
+  insertedCells: number;
   destination: string;
 };
 
@@ -147,9 +148,7 @@ export function App() {
         sheetName,
         totalRows: rows.length,
         filteredRows: filteredRows.length,
-        columns: dataset.columns,
-        rows: dataset.rows,
-        byColumn: dataset.byColumn,
+        data: rows,
       };
 
       const response = await fetch("/api/save-flights", {
@@ -166,7 +165,7 @@ export function App() {
 
       const result = (await response.json()) as SaveApiSuccess;
       setSaveState("success");
-      setSaveMessage(`Data saved to Cloudflare D1 (${result.rowCount} rows).`);
+      setSaveMessage(`Data saved to Cloudflare D1 (${result.rowCount} rows, ${result.insertedCells} cells).`);
     } catch (uploadError) {
       setSaveState("error");
       setSaveMessage(uploadError instanceof Error ? uploadError.message : "Upload failed.");
