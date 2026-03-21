@@ -1,3 +1,5 @@
+type FlightRow = Record<string, unknown>;
+
 type RequestBody = {
   savedAt?: string;
   sheetName?: string;
@@ -18,9 +20,15 @@ type ApiResponse = {
   json: (payload: unknown) => void;
 };
 
-type CloudflareD1Result = {
+type CloudflareD1QueryResult = {
   success?: boolean;
   errors?: Array<{ message?: string }>;
+  result?: Array<{
+    results?: Array<Record<string, unknown>>;
+    meta?: {
+      last_row_id?: number;
+    };
+  }>;
 };
 
 async function executeD1Statement(statement: string, params: unknown[]) {
@@ -42,10 +50,7 @@ async function executeD1Statement(statement: string, params: unknown[]) {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        sql: statement,
-        params,
-      }),
+      body: JSON.stringify({ sql: statement, params }),
     },
   );
 
@@ -53,12 +58,35 @@ async function executeD1Statement(statement: string, params: unknown[]) {
     throw new Error(`D1 query failed (${response.status})`);
   }
 
-  const payload = (await response.json()) as CloudflareD1Result;
+  const payload = (await response.json()) as CloudflareD1QueryResult;
 
   if (!payload.success) {
     const details = payload.errors?.map((entry) => entry.message).filter(Boolean).join("; ");
     throw new Error(details || "D1 query execution failed");
   }
+
+  return payload.result?.[0];
+}
+
+function toFlightRows(data: unknown): FlightRow[] {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  return data.map((row) => {
+    if (row && typeof row === "object") {
+      return row as FlightRow;
+    }
+
+    return { value: row };
+  });
+}
+
+function normalizeCellValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
@@ -69,6 +97,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   try {
     const body = (req.body ?? {}) as RequestBody;
+    const rows = toFlightRows(body.data);
 
     await executeD1Statement(
       `
@@ -77,33 +106,68 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         saved_at TEXT NOT NULL,
         sheet_name TEXT,
         total_rows INTEGER,
-        filtered_rows INTEGER,
-        payload_json TEXT NOT NULL
+        filtered_rows INTEGER
+      );
+      `,
+      [],
+    );
+
+    await executeD1Statement(
+      `
+      CREATE TABLE IF NOT EXISTS flight_snapshot_cells (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_id INTEGER NOT NULL,
+        row_index INTEGER NOT NULL,
+        column_name TEXT NOT NULL,
+        cell_value TEXT,
+        FOREIGN KEY (snapshot_id) REFERENCES flight_snapshots(id)
       );
       `,
       [],
     );
 
     const savedAt = body.savedAt ?? new Date().toISOString();
-    const rowCount = Array.isArray(body.data) ? body.data.length : 0;
 
-    await executeD1Statement(
+    const insertSnapshot = await executeD1Statement(
       `
-      INSERT INTO flight_snapshots (saved_at, sheet_name, total_rows, filtered_rows, payload_json)
-      VALUES (?, ?, ?, ?, ?);
+      INSERT INTO flight_snapshots (saved_at, sheet_name, total_rows, filtered_rows)
+      VALUES (?, ?, ?, ?);
       `,
-      [
-        savedAt,
-        body.sheetName ?? null,
-        body.totalRows ?? 0,
-        body.filteredRows ?? rowCount,
-        JSON.stringify(body.data ?? []),
-      ],
+      [savedAt, body.sheetName ?? null, body.totalRows ?? rows.length, body.filteredRows ?? rows.length],
     );
+
+    let snapshotId = insertSnapshot?.meta?.last_row_id;
+
+    if (!snapshotId) {
+      const lastInsert = await executeD1Statement(`SELECT last_insert_rowid() AS id;`, []);
+      const rawId = lastInsert?.results?.[0]?.id;
+      snapshotId = typeof rawId === "number" ? rawId : Number(rawId);
+    }
+
+    if (!snapshotId || Number.isNaN(snapshotId)) {
+      throw new Error("Unable to determine inserted snapshot id");
+    }
+
+    let insertedCells = 0;
+
+    for (const [rowIndex, row] of rows.entries()) {
+      for (const [columnName, rawValue] of Object.entries(row)) {
+        await executeD1Statement(
+          `
+          INSERT INTO flight_snapshot_cells (snapshot_id, row_index, column_name, cell_value)
+          VALUES (?, ?, ?, ?);
+          `,
+          [snapshotId, rowIndex, columnName, normalizeCellValue(rawValue)],
+        );
+        insertedCells += 1;
+      }
+    }
 
     res.status(200).json({
       savedAt,
-      rowCount,
+      rowCount: rows.length,
+      insertedCells,
+      snapshotId,
       destination: "cloudflare-d1",
     });
   } catch (error) {
