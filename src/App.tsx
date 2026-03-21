@@ -5,10 +5,12 @@ import scheduleFileUrl from "../flightSearch - Copy (3).xlsm?url";
 type FlightRow = Record<string, string | number | boolean | null | undefined>;
 
 type SaveApiSuccess = {
-  savedAt: string;
+  uploadedAt: string;
   rowCount: number;
-  destination: string;
 };
+
+const SCHEDULE_FILE = scheduleFileUrl;
+const BLOB_UPLOAD_SAS_URL = import.meta.env.VITE_BLOB_UPLOAD_SAS_URL as string | undefined;
 
 const SCHEDULE_FILE = scheduleFileUrl;
 function normalize(value: unknown): string {
@@ -49,6 +51,23 @@ function getDisplayColumns(rows: FlightRow[]): string[] {
   const prioritized = preferred.filter((column) => existing.has(column));
   const remaining = [...existing].filter((column) => !prioritized.includes(column));
   return [...prioritized, ...remaining];
+}
+
+function buildBlobDataset(columns: string[], rows: FlightRow[]) {
+  const rowMatrix = rows.map((row) => columns.map((column) => normalize(row[column]) || "—"));
+
+  const columnMap = Object.fromEntries(
+    columns.map((column, columnIndex) => [
+      column,
+      rowMatrix.map((rowValues) => rowValues[columnIndex]),
+    ]),
+  );
+
+  return {
+    columns,
+    rows: rowMatrix,
+    byColumn: columnMap,
+  };
 }
 
 export function App() {
@@ -119,18 +138,41 @@ export function App() {
     });
   }, [query, rows]);
 
-  async function saveToCloudflareD1() {
+  async function saveToBlobStorage() {
     try {
       setSaveState("saving");
       setSaveMessage("");
+
+      const dataset = buildBlobDataset(columns, filteredRows);
 
       const payload = {
         savedAt: new Date().toISOString(),
         sheetName,
         totalRows: rows.length,
         filteredRows: filteredRows.length,
-        data: filteredRows,
+        columns: dataset.columns,
+        rows: dataset.rows,
+        byColumn: dataset.byColumn,
       };
+
+      if (BLOB_UPLOAD_SAS_URL) {
+        const response = await fetch(BLOB_UPLOAD_SAS_URL, {
+          method: "PUT",
+          headers: {
+            "x-ms-blob-type": "BlockBlob",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload, null, 2),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Blob upload failed (${response.status})`);
+        }
+
+        setSaveState("success");
+        setSaveMessage("Data saved to blob storage via SAS URL.");
+        return;
+      }
 
       const response = await fetch("/api/save-flights", {
         method: "POST",
@@ -141,12 +183,12 @@ export function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Cloudflare D1 API save failed (${response.status})`);
+        throw new Error(`Blob API upload failed (${response.status})`);
       }
 
       const result = (await response.json()) as SaveApiSuccess;
       setSaveState("success");
-      setSaveMessage(`Data saved to Cloudflare D1 (${result.rowCount} rows).`);
+      setSaveMessage(`Data saved to blob storage (${result.rowCount} rows).`);
     } catch (uploadError) {
       setSaveState("error");
       setSaveMessage(uploadError instanceof Error ? uploadError.message : "Upload failed.");
@@ -185,10 +227,10 @@ export function App() {
           <button
             className="save-button"
             disabled={loading || !!error || filteredRows.length === 0 || saveState === "saving"}
-            onClick={() => void saveToCloudflareD1()}
+            onClick={() => void saveToBlobStorage()}
             type="button"
           >
-            {saveState === "saving" ? "Saving..." : "Save to Cloudflare D1"}
+            {saveState === "saving" ? "Saving..." : "Save to Blob"}
           </button>
         </div>
 
